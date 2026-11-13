@@ -27,9 +27,40 @@ window.__ModuleLoader__.load({
     const NS = 'myDeploy';
     /** Stable id shared by the sidebar entry and the main panel key. */
     const PANEL_ID = 'my-deploy';
+    /** The Host route a page-side report goes to. */
+    const API = '/api/my-deploy';
 
     /** Every chunk after the dictionaries and the styles, in dependency order. */
     const CHUNKS = ['client.utils.js', 'client.model.js', 'client.data.js', 'client.ui.js'];
+
+    /**
+     * Report one page-side event to the Host, which keeps a bounded trail in
+     * `<storages>/my-deploy-diagnostics.json`. A page that renders nothing is
+     * invisible from the Host, so the mount heartbeat is the one signal that
+     * separates "did not mount" from "mounted but looks empty".
+     * Never throws and never retries: reporting must not break the page.
+     */
+    function report(kind, message, detail, view) {
+      try {
+        const body = JSON.stringify({
+          kind: String(kind ?? ''),
+          message: String(message ?? ''),
+          detail: String(detail ?? ''),
+          view: view ?? null,
+        });
+        const call = fetch(`${API}/diagnostic`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+          cache: 'no-store',
+          credentials: 'same-origin',
+          keepalive: true,
+        });
+        if (call && typeof call.catch === 'function') call.catch(() => {});
+      } catch (error) {
+        /* reporting is best effort */
+      }
+    }
 
     /** Resolve one package-local chunk through the Harness module loader. */
     const chunk = (file) => require.async(`./${file}`);
@@ -68,9 +99,33 @@ window.__ModuleLoader__.load({
           return () => style.remove();
         }, 'my-deploy: styles');
 
-        const runtime = { React, h, NS, PANEL_ID, t };
+        const runtime = { React, h, NS, PANEL_ID, t, report };
         for (const file of CHUNKS) await extend(runtime, file);
         const page = (await chunk('client.page.js'))(runtime);
+
+        /* Uncaught page errors and rejected promises join the same trail, so a
+           broken chunk or a library error is readable without a console. */
+        ctx.effect(() => {
+          const onError = (event) => {
+            const target = event && event.target;
+            const where = target && typeof target.src === 'string' ? target.src : `${(event && event.filename) ?? ''}:${(event && event.lineno) ?? 0}`;
+            report('window.error', String((event && event.message) || 'script error'), where);
+          };
+          const onRejection = (event) => {
+            const reason = event && event.reason;
+            report(
+              'window.rejection',
+              String(reason && reason.message ? reason.message : reason),
+              reason && typeof reason.stack === 'string' ? reason.stack.slice(0, 2000) : '',
+            );
+          };
+          window.addEventListener('error', onError);
+          window.addEventListener('unhandledrejection', onRejection);
+          return () => {
+            window.removeEventListener('error', onError);
+            window.removeEventListener('unhandledrejection', onRejection);
+          };
+        }, 'my-deploy: page reporters');
 
         ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
@@ -95,7 +150,9 @@ window.__ModuleLoader__.load({
             page.Page,
           ),
         );
+        report('apply.ok', 'plugin applied', `chunks=${CHUNKS.join(',')}`);
       } catch (error) {
+        report('apply.failed', error instanceof Error ? error.message : String(error), error instanceof Error ? String(error.stack ?? '') : '');
         ctx.effect(() => {
           const style = document.createElement('style');
           style.setAttribute('data-my-deploy', '');

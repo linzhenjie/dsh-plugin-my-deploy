@@ -58,8 +58,57 @@ window.__ModuleLoader__.load({
       /** The tab a view id maps to; a stale stored id falls back to monitor. */
       const VIEW_OF = { monitor: 'monitor', logs: 'logs', traces: 'traces' };
 
-      function Page(props) {
-        const t = props.t;
+      /**
+       * A locale lookup that cannot take the page down: a deployment without the
+       * dictionary still renders keys instead of throwing on the first label.
+       */
+      function localeOf(props) {
+        const t = props !== null && props !== undefined ? props.t : undefined;
+        if (typeof t === 'function') return t;
+        return (key) => String(key);
+      }
+
+      /**
+       * The panel's own error surface. Without it a render error leaves an empty
+       * white panel with the reason only in the browser console; with it the page
+       * says what broke, and the Host keeps a record of it.
+       */
+      class PanelBoundary extends React.Component {
+        constructor(props) {
+          super(props);
+          this.state = { error: null };
+        }
+
+        static getDerivedStateFromError(error) {
+          return { error };
+        }
+
+        componentDidCatch(error, info) {
+          if (typeof runtime.report === 'function') {
+            runtime.report(
+              'panel.crash',
+              error instanceof Error ? error.message : String(error),
+              `${error instanceof Error ? String(error.stack ?? '') : ''}\n${String(info && info.componentStack ? info.componentStack : '')}`.slice(0, 3000),
+            );
+          }
+        }
+
+        render() {
+          if (this.state.error === null) return this.props.children;
+          const message = this.state.error instanceof Error ? this.state.error.message : String(this.state.error);
+          return h(
+            'div',
+            { className: 'dp-fail', role: 'alert' },
+            h('h1', null, '页面渲染失败 / the panel failed to render'),
+            h('p', null, '把下面的信息发给我即可定位。 / Send the text below to fix it.'),
+            h('code', null, message),
+          );
+        }
+      }
+
+      function Panel(props) {
+        const t = localeOf(props);
+        const report = typeof runtime.report === 'function' ? runtime.report : () => {};
 
         const [boot, setBoot] = React.useState({ phase: 'loading', detail: '' });
         const [view, setView] = React.useState({
@@ -87,6 +136,36 @@ window.__ModuleLoader__.load({
         const seq = React.useRef(0);
         const loaded = React.useRef(false);
         const flashTimer = React.useRef(null);
+
+        /* One heartbeat per mount, with the size the page actually got: a 0x0 box
+           is the difference between "never mounted" and "mounted but invisible". */
+        React.useEffect(() => {
+          const frame =
+            typeof requestAnimationFrame === 'function'
+              ? requestAnimationFrame(() => {
+                  const node = document.querySelector('.dp-page');
+                  const rect = node === null ? null : node.getBoundingClientRect();
+                  report('panel.mount', 'panel mounted', `tab=${tab} service=${service || '-'} range=${range}`, {
+                    w: rect === null ? 0 : Math.round(rect.width),
+                    h: rect === null ? 0 : Math.round(rect.height),
+                    dpr: typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+                    tab,
+                    phase: 'mount',
+                  });
+                })
+              : null;
+          return () => {
+            if (frame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+          };
+          // Mount only: later renders are reported through boot/phase below.
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, []);
+
+        React.useEffect(() => {
+          if (boot.phase === 'loading') return;
+          report('panel.boot', boot.phase, boot.detail);
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [boot.phase, boot.detail]);
 
         React.useEffect(
           () => () => {
@@ -419,7 +498,7 @@ window.__ModuleLoader__.load({
         );
       }
 
-      return { Page };
+      return { Page: (props) => h(PanelBoundary, null, h(Panel, props)), Panel };
     };
   },
 });

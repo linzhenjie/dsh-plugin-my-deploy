@@ -20,12 +20,15 @@
  *   GET  /api/my-deploy/logs           log rows
  *   GET  /api/my-deploy/traces         trace rows
  *   POST /api/my-deploy/chat           one question, answered through MCP tools
+ *   POST /api/my-deploy/diagnostic     one page-side failure or mount report
  *
  * A domain failure (no endpoint, no matching tool, a failed query) answers 200
  * with `ok: false` and a `reason`, because the page renders those as empty
  * states rather than as errors. Only a transport failure of the route itself
  * answers a non-2xx status.
  */
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { ask } from './lib/agent.js';
 import { GrafanaReader, windowOf } from './lib/grafana.js';
 import { openSession } from './lib/mcp-client.js';
@@ -48,6 +51,8 @@ const CAPABILITIES = ['mcp', 'metrics', 'logs', 'traces', 'chat', 'services'];
 const RETRY_COOLDOWN_MS = 10000;
 /** Service-name cache window. */
 const SERVICES_TTL_MS = 120000;
+/** Page-side reports kept on disk: a bounded trail, never a log file that grows. */
+const DIAGNOSTIC_LIMIT = 40;
 
 /** A request failure carrying the status the caller should answer with. */
 class HttpError extends Error {
@@ -171,6 +176,27 @@ function limitOf(params, fallback, max) {
 export function apply(ctx) {
   const file = dataFile();
   const store = createStore(file, ctx.logger);
+  /**
+   * Where the page's own reports land. A page that cannot reach this route (or
+   * cannot render at all) is invisible from the Host, so the page posts a mount
+   * heartbeat and every uncaught failure here, and the trail is one small file
+   * that can be read without a browser console.
+   */
+  const diagnosticsFile = join(dirname(file), 'my-deploy-diagnostics.json');
+  const reports = [];
+
+  /** Keep one bounded trail of page-side reports. */
+  async function recordDiagnostic(entry) {
+    reports.push(entry);
+    if (reports.length > DIAGNOSTIC_LIMIT) reports.splice(0, reports.length - DIAGNOSTIC_LIMIT);
+    const body = `${JSON.stringify({ updatedAt: Date.now(), entries: reports }, null, 2)}\n`;
+    try {
+      await mkdir(dirname(diagnosticsFile), { recursive: true, mode: 0o700 });
+      await writeFile(diagnosticsFile, body, 'utf8');
+    } catch (error) {
+      ctx.logger?.warn?.(`my-deploy: could not write the diagnostics file: ${String(error)}`);
+    }
+  }
 
   /** The one live MCP session and its observable state. */
   const link = {
@@ -432,6 +458,36 @@ export function apply(ctx) {
   }
 
   /**
+   * Record one page-side report: a mount heartbeat, an uncaught error, or a
+   * failed chunk load. Answers even when the report is malformed, because a page
+   * that cannot report is exactly the case this route exists for.
+   */
+  async function handleDiagnostic(req, res) {
+    const body = await readJson(req);
+    const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
+    const view = body.view !== null && typeof body.view === 'object' ? body.view : null;
+    const entry = {
+      at: Date.now(),
+      kind: text(body.kind, 40) || 'report',
+      message: text(body.message, 2000),
+      detail: text(body.detail, 4000),
+      view:
+        view === null
+          ? null
+          : {
+              w: Number(view.w) || 0,
+              h: Number(view.h) || 0,
+              dpr: Number(view.dpr) || 0,
+              tab: text(view.tab, 40),
+              phase: text(view.phase, 80),
+            },
+    };
+    await recordDiagnostic(entry);
+    ctx.logger?.info?.(`my-deploy: page ${entry.kind}: ${entry.message.slice(0, 200)}`);
+    send(res, 200, { ok: true, entries: reports.length });
+  }
+
+  /**
    * The route table: one exact prefix owner, with each path naming the methods
    * it accepts, so a GET can never write and a POST can never read the list.
    */
@@ -445,6 +501,7 @@ export function apply(ctx) {
     { path: '/logs', methods: ['GET', 'HEAD'], run: handleLogs },
     { path: '/traces', methods: ['GET', 'HEAD'], run: handleTraces },
     { path: '/chat', methods: ['POST'], run: handleChat },
+    { path: '/diagnostic', methods: ['POST'], run: handleDiagnostic },
   ];
 
   const handler = async (req, res) => {
