@@ -41,8 +41,11 @@ window.__ModuleLoader__.load({
         h,
         initialChat,
         initialPieces,
+        markFailed,
+        markLoading,
+        markSettled,
         messageOf,
-        piece,
+        pieceKeyOf,
         React,
         reasonText,
         readRange,
@@ -55,8 +58,15 @@ window.__ModuleLoader__.load({
         writeTab,
       } = runtime;
 
-      /** The tab a view id maps to; a stale stored id falls back to monitor. */
-      const VIEW_OF = { monitor: 'monitor', logs: 'logs', traces: 'traces' };
+      /** The unloaded piece a tab shows before its first load. */
+      const IDLE_PIECE = { phase: 'idle', data: null, detail: '' };
+
+      /** The piece one tab renders, or the idle placeholder for an unknown tab. */
+      function activePiece(pieces, tab) {
+        const key = pieceKeyOf(tab);
+        const found = key === undefined ? undefined : pieces[key];
+        return found ?? IDLE_PIECE;
+      }
 
       /**
        * A locale lookup that cannot take the page down: a deployment without the
@@ -249,17 +259,17 @@ window.__ModuleLoader__.load({
         const loadPiece = React.useCallback(
           async (kind) => {
             const token = ++seq.current;
-            setPieces((previous) => ({ ...previous, [kind]: piece('loading', previous[kind].data, '') }));
+            setPieces((previous) => markLoading(previous, kind));
             try {
               let data;
               if (kind === 'metrics') data = await fetchMetrics(service, range);
               else if (kind === 'logs') data = await fetchLogs(service, range, 60);
               else data = await fetchTraces(service, range, 40);
               if (!alive.current || token !== seq.current) return;
-              setPieces((previous) => ({ ...previous, [kind]: piece(data.ok === true ? 'ready' : 'empty', data, '') }));
+              setPieces((previous) => markSettled(previous, kind, data, ''));
             } catch (error) {
               if (!alive.current || token !== seq.current) return;
-              setPieces((previous) => ({ ...previous, [kind]: piece('error', null, messageOf(error)) }));
+              setPieces((previous) => markFailed(previous, kind, messageOf(error)));
             }
           },
           [service, range],
@@ -267,7 +277,7 @@ window.__ModuleLoader__.load({
 
         React.useEffect(() => {
           if (boot.phase !== 'ready') return;
-          const kind = VIEW_OF[tab];
+          const kind = pieceKeyOf(tab);
           if (kind === undefined) return;
           void loadPiece(kind);
         }, [boot.phase, tab, service, range, tick, view.connection.status, loadPiece]);
@@ -380,11 +390,11 @@ window.__ModuleLoader__.load({
               ),
             );
             /* The rows the model fetched replace the list, so both agree. */
-            if (key === 'logs' && answer.logs !== null && answer.logs.ok) {
-              setPieces((previous) => ({ ...previous, logs: piece('ready', answer.logs, '') }));
+            if (key === 'logs' && answer.logs !== null && answer.logs.ok === true) {
+              setPieces((previous) => markSettled(previous, 'logs', answer.logs, ''));
             }
-            if (key === 'traces' && answer.traces !== null && answer.traces.ok) {
-              setPieces((previous) => ({ ...previous, traces: piece('ready', answer.traces, '') }));
+            if (key === 'traces' && answer.traces !== null && answer.traces.ok === true) {
+              setPieces((previous) => markSettled(previous, 'traces', answer.traces, ''));
             }
           } catch (error) {
             if (!alive.current) return;
@@ -398,7 +408,7 @@ window.__ModuleLoader__.load({
 
         /* ---------- render ---------- */
 
-        const active = pieces[VIEW_OF[tab]] ?? piece('idle', null, '');
+        const active = activePiece(pieces, tab);
         const connectAction = () => {
           openDrawer();
         };

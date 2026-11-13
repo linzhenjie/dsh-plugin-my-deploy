@@ -163,10 +163,33 @@ Author's local checks (the Harness Web UI needs no browser control for these):
   metric/log/trace parsing, service label values.
 - The real `apply(ctx)` and route handler in-process: save → connect → metrics →
   logs → traces → services → chat (scripted model with a real tool round trip,
-  and the no-model fallback) → disconnect → refused writes.
+  and the no-model fallback) → disconnect → refused writes → one page report.
+- Every tab's piece key: `monitor` reads the `metrics` piece, so the model layer
+  asserts `initialPieces()[pieceKeyOf(tab)]` exists and that marking a piece
+  loading/ready/failed never dereferences an absent key. (A tab id used as a
+  piece key is exactly how v0.1.2 white-screened the panel.)
+- Rendered markup under the real React 18 *and* React 19 (`react-dom/server`) for
+  22 component states: each tab with data, empty, not-connected, no-tool, loading,
+  error, chat with tool calls, and the drawer in both transports.
 - Live composition: the `my-deploy` row reports `fiberPhase: active`, and the
   Client registers both `sidebar.panellist` (id `my-deploy`) and `main`
   (key `my-deploy`).
+
+### Page diagnostics
+
+The page reports to the Host, which keeps a bounded trail (last 40 entries) at
+`%DSH_HOME%\storages\my-deploy-diagnostics.json`:
+
+| Record | Meaning |
+|---|---|
+| `host.ready` | plugin version activated, plus the client entry `clientModules` resolved |
+| `apply.ok` / `apply.failed` | the Client half mounted its slots (or why it could not) |
+| `panel.mount` | the panel rendered; `view.w` × `view.h` is the real box, so `0×0` means mounted but invisible |
+| `panel.boot` | the Host state read finished with this phase |
+| `panel.crash` | a render error, with the component stack (the panel also shows it) |
+| `window.error` / `window.rejection` | an uncaught page error or a failed chunk load |
+
+That trail is how a blank panel is diagnosed without a browser console.
 
 Not verifiable without browser control: the rendered page. Reload the Web UI and
 open the panel to see it.

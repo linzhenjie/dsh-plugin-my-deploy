@@ -58,6 +58,18 @@ window.__ModuleLoader__.load({
         return { phase, data, detail: textOf(detail) };
       }
 
+      /**
+       * The piece one tab loads. The monitor tab reads the `metrics` piece, which
+       * is *not* named after the tab: every reader and writer of `pieces` goes
+       * through this map so a tab id can never be used as a piece key by accident.
+       */
+      const PIECE_KEYS = { monitor: 'metrics', logs: 'logs', traces: 'traces' };
+
+      /** The piece key for one tab id, or undefined for an unknown id. */
+      function pieceKeyOf(tab) {
+        return Object.prototype.hasOwnProperty.call(PIECE_KEYS, tab) ? PIECE_KEYS[tab] : undefined;
+      }
+
       /** The three pieces, all unloaded. */
       function initialPieces() {
         return {
@@ -65,6 +77,28 @@ window.__ModuleLoader__.load({
           logs: piece('idle', null, ''),
           traces: piece('idle', null, ''),
         };
+      }
+
+      /**
+       * Mark one piece as loading, keeping its last payload on screen.
+       * Pure, and tolerant of an unknown key: a load for a piece that does not
+       * exist is a no-op instead of a render-time crash.
+       */
+      function markLoading(pieces, kind) {
+        const current = pieces !== null && typeof pieces === 'object' ? pieces[kind] : undefined;
+        if (current === undefined) return pieces;
+        return { ...pieces, [kind]: piece('loading', current.data, current.detail) };
+      }
+
+      /** Mark one piece with its settled payload. */
+      function markSettled(pieces, kind, payload, detail) {
+        const phase = payload !== null && typeof payload === 'object' && payload.ok === true ? 'ready' : 'empty';
+        return { ...pieces, [kind]: piece(phase, payload, detail) };
+      }
+
+      /** Mark one piece as failed, keeping no payload. */
+      function markFailed(pieces, kind, detail) {
+        return { ...pieces, [kind]: piece('error', null, detail) };
       }
 
       /** Read the last tab from storage, falling back to the first one. */
@@ -380,12 +414,16 @@ window.__ModuleLoader__.load({
         connectionLabel,
         initialChat,
         initialPieces,
+        markFailed,
+        markLoading,
+        markSettled,
         normalizeConfig,
         normalizeLogs,
         normalizeMetrics,
         normalizeState,
         normalizeTraces,
         piece,
+        pieceKeyOf,
         readRange,
         readService,
         readTab,
