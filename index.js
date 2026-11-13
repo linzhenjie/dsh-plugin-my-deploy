@@ -39,6 +39,10 @@ export const inject = ['webServer'];
 
 /** Route prefix owned by this plugin. */
 const BASE = '/api/my-deploy';
+/** The panel id shared by the sidebar entry and the main panel key. */
+const PANEL_ID = 'my-deploy';
+/** This Host build's version, recorded once at activation. */
+const VERSION = '0.1.2';
 /** Largest accepted request body; a chat question plus history fits easily. */
 const MAX_BODY_BYTES = 128 * 1024;
 /**
@@ -537,6 +541,30 @@ export function apply(ctx) {
     () => ctx.webServer.register({ kind: 'prefix', path: BASE, handler }),
     'my-deploy: observability routes',
   );
+
+  /**
+   * One activation record. The page half is invisible from the Host and from any
+   * shell without the browser session, so this line is the only way to confirm
+   * which installed bundle is actually running: it names the version and the
+   * client entry the web plugin table resolved for it.
+   */
+  ctx.effect(() => {
+    let clientPath = '';
+    try {
+      const modules = ctx.get('clientModules');
+      if (modules !== undefined && typeof modules.clientPath === 'function') clientPath = modules.clientPath(PANEL_ID) ?? '';
+    } catch (error) {
+      /* a composition without the web plugin table simply has no client entry */
+    }
+    void recordDiagnostic({
+      at: Date.now(),
+      kind: 'host.ready',
+      message: `my-deploy ${VERSION} activated`,
+      detail: clientPath === '' ? 'client entry: unresolved' : `client entry: ${clientPath}`,
+      view: null,
+    });
+    return () => {};
+  }, 'my-deploy: activation record');
 
   /* Connect once at activation, so the page opens with a real status. */
   ctx.effect(() => {
