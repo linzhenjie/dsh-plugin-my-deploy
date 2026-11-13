@@ -328,6 +328,9 @@ window.__ModuleLoader__.load({
               : h('span', { className: 'dp-cardValue' }, '—'),
           ),
           h(Chart, { points: metric.points, tone, label: title }),
+          metric.ok && metric.points.length === 0
+            ? h('p', { className: 'dp-note' }, t('monitor.emptySeries'))
+            : null,
           metric.ok
             ? h(
                 'div',
@@ -672,7 +675,6 @@ window.__ModuleLoader__.load({
           headersText: config.headersText,
           serverName: config.serverName,
           autoConnect: config.autoConnect,
-          datasourceUid: config.datasourceUid,
           queries: { ...config.queries },
         }));
         const set = (key, value) => setDraft((previous) => ({ ...previous, [key]: value }));
@@ -688,7 +690,6 @@ window.__ModuleLoader__.load({
           headersText: draft.headersText,
           serverName: draft.serverName,
           autoConnect: draft.autoConnect,
-          datasourceUid: draft.datasourceUid,
           queries: draft.queries,
           ...(connect ? { connect: true } : {}),
         });
@@ -881,15 +882,7 @@ window.__ModuleLoader__.load({
                 'details',
                 { className: 'dp-field' },
                 h('summary', { className: 'dp-hint' }, t('mcp.advanced')),
-                h(Field, {
-                  label: 'Datasource UID',
-                  children: h('input', {
-                    className: 'dp-input',
-                    value: draft.datasourceUid,
-                    spellCheck: false,
-                    onChange: (event) => set('datasourceUid', event.target.value),
-                  }),
-                }),
+                h('p', { className: 'dp-hint' }, t('mcp.datasourceHint')),
                 h(Field, {
                   label: 'PromQL · CPU',
                   children: h('textarea', {

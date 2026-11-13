@@ -38,7 +38,6 @@ window.__ModuleLoader__.load({
         autoConnect: true,
         service: '',
         range: '1h',
-        datasourceUid: '',
         queries: { cpu: '', memory: '', logs: '', traces: '' },
       };
 
@@ -189,7 +188,6 @@ window.__ModuleLoader__.load({
           autoConnect: source.autoConnect !== false,
           service: textOf(source.service),
           range: RANGES.includes(source.range) ? source.range : '1h',
-          datasourceUid: textOf(source.datasourceUid),
           queries: {
             cpu: textOf(queries.cpu),
             memory: textOf(queries.memory),

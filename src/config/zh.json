@@ -53,7 +53,8 @@
   "mcp.instructions": "服务端说明",
   "mcp.help": "配置会保存在 Host 的 storages 目录下，令牌只在本地磁盘与本地请求中出现。",
   "mcp.autoConnect": "启动时自动连接",
-  "mcp.advanced": "高级：数据源与查询模板",
+  "mcp.advanced": "高级：查询模板",
+  "mcp.datasourceHint": "数据源 UID 不需要配置：连接后先调用 list_datasources，按类型自动选中 prometheus / loki / tempo，再在每次查询里显式带上 datasourceUid。",
 
   "monitor.cpu": "CPU 使用",
   "monitor.memory": "内存占用",
@@ -71,6 +72,7 @@
   "monitor.unitCores": "核",
   "monitor.unitBytes": "字节",
   "monitor.updated": "更新于",
+  "monitor.emptySeries": "查询成功，但该数据源在此时间范围内没有匹配的序列：确认 PromQL 模板与数据源里真实存在的指标名。",
 
   "logs.loading": "正在读取日志…",
   "logs.empty": "没有匹配的日志",

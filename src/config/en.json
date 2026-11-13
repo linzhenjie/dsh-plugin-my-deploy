@@ -53,7 +53,8 @@
   "mcp.instructions": "Server instructions",
   "mcp.help": "Settings are stored in the Host storages directory; the token only travels over the local page and local disk.",
   "mcp.autoConnect": "Connect on start",
-  "mcp.advanced": "Advanced: datasource and query templates",
+  "mcp.advanced": "Advanced: query templates",
+  "mcp.datasourceHint": "No datasource UID to configure: on connect the page calls list_datasources, picks prometheus / loki / tempo by type, and sends datasourceUid with every query.",
 
   "monitor.cpu": "CPU usage",
   "monitor.memory": "Memory",
@@ -71,6 +72,7 @@
   "monitor.unitCores": "cores",
   "monitor.unitBytes": "bytes",
   "monitor.updated": "Updated",
+  "monitor.emptySeries": "The query succeeded, but this datasource has no matching series in that window: check the PromQL template against the metric names it actually has.",
 
   "logs.loading": "Reading logs…",
   "logs.empty": "No matching logs",

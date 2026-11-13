@@ -31,7 +31,7 @@ and watch from the page itself.
 | **Logs** | Log rows (time, level chip, message); clicking a row reveals its labels. |
 | **Traces** | Trace rows (root span, trace id, service, duration bar, span count); clicking a row expands the span tree with per-span durations. |
 | **Chat** | Under both logs and traces: a question goes to the Harness default model with every discovered MCP tool attached; the model calls the tools, the Host executes them, and the answer plus the rows it fetched land in the list above. |
-| **MCP drawer** | Transport (Streamable HTTP or stdio), endpoint or command, request headers, server name, auto-connect, the datasource UID, and the four query templates. Shows server name/version, protocol revision, connection time, the discovered tool list, and the last error. |
+| **MCP drawer** | Transport (Streamable HTTP or stdio), endpoint or command, request headers, server name, auto-connect, and the four query templates. Shows server name/version, protocol revision, connection time, the discovered tool list, and the last error. No datasource UID to configure — see below. |
 
 ## Requirements
 
@@ -109,6 +109,27 @@ If your stack uses `job`/`service` instead of `service_name`, edit the templates
 once — the values are stored with the connection. All arguments are synthesized
 from each tool's own `inputSchema` (`expr` vs `query`, `startTime` vs `start`,
 `stepSeconds` vs `step`, …), so an unfamiliar server spelling still works.
+
+### The datasource UID is discovered, never configured
+
+Every Grafana MCP query tool requires a `datasourceUid`. The page resolves it from
+the MCP server itself:
+
+1. it calls the server's datasource listing tool (`list_datasources`),
+2. it matches by datasource type — `prometheus`/`mimir`/`cortex` for metrics,
+   `loki`/`victorialogs`/`elasticsearch` for logs, `tempo`/`jaeger`/`zipkin` for
+   traces — preferring the one Grafana marks as default,
+3. it sends that uid explicitly on every query, under whatever property the tool
+   declares (`datasourceUid`, `datasource_uid`, `datasource`, …), including for
+   the tool calls the chat model chooses.
+
+The result is cached per connection for five minutes. A server without a listing
+tool simply gets no uid argument, and one that has no matching datasource reports
+the server's own error.
+
+Because the monitor tab can only chart series that exist, a datasource with no
+data says so ("the query succeeded but this datasource has no matching series")
+instead of drawing an empty chart silently.
 
 ## Host routes
 
