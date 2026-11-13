@@ -1,0 +1,61 @@
+{
+  "name": "my-deploy",
+  "version": "1.6.0",
+  "type": "module",
+  "description": "A sidebar page with Grafana observability dashboard for metrics, logs and traces.",
+  "icon": "./icon.svg",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linzhenjie/dsh-plugin-my-deploy.git"
+  },
+  "homepage": "https://github.com/linzhenjie/dsh-plugin-my-deploy#readme",
+  "bugs": {
+    "url": "https://github.com/linzhenjie/dsh-plugin-my-deploy/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "grafana",
+    "observability",
+    "loki",
+    "tempo"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "client.*.js",
+    "build.mjs",
+    "src",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md"
+  ]
+}

@@ -1,0 +1,6 @@
+# my-deploy bundle patch: inserts the plugin into a profile's layer stack.
+# The Host half is empty; the Client module (client.js) owns the sidebar entry
+# and the page it opens.
+- insert:
+    - id: my-deploy
+      name: 'my-deploy'

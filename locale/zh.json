@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "my-Navigation",
+    "description": "侧边栏页面：导航、代办、便签三个标签页，数据由 Host 持久化。"
+  }
+}
