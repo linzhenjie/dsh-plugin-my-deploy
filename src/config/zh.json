@@ -113,6 +113,7 @@
   "status.notConnected": "未连接 MCP",
   "status.noTool": "服务端缺少所需工具",
   "status.queryFailed": "查询失败",
+  "status.grafanaAuth": "Grafana 鉴权失败：MCP 服务端到 Grafana 的 token 无效或过期",
   "status.noModel": "没有可用的默认模型，已直接调用 MCP 工具。",
   "status.connectHint": "在右上角配置并连接 Grafana MCP 后即可加载数据。",
 

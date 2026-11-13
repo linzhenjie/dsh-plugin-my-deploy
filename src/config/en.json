@@ -113,6 +113,7 @@
   "status.notConnected": "MCP not connected",
   "status.noTool": "The server misses a required tool",
   "status.queryFailed": "Query failed",
+  "status.grafanaAuth": "Grafana rejected the MCP server's token (invalid or expired)",
   "status.noModel": "No default model is available, so MCP tools were called directly.",
   "status.connectHint": "Configure and connect Grafana MCP from the top right to load data.",
 

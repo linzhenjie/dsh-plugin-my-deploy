@@ -235,6 +235,8 @@ window.__ModuleLoader__.load({
             return t('status.noTool');
           case 'query-failed':
             return t('status.queryFailed');
+          case 'grafana-auth':
+            return t('status.grafanaAuth');
           case 'connect-failed':
             return t('mcp.status.error');
           case 'no-model':

@@ -42,7 +42,7 @@ const BASE = '/api/my-deploy';
 /** The panel id shared by the sidebar entry and the main panel key. */
 const PANEL_ID = 'my-deploy';
 /** This Host build's version, recorded once at activation. */
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 /** Largest accepted request body; a chat question plus history fits easily. */
 const MAX_BODY_BYTES = 128 * 1024;
 /**
