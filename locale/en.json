@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Grafana Observability",
+    "description": "Monitor, logs and traces in one page, served by a Grafana MCP connection you configure and watch from the page itself."
+  }
+}

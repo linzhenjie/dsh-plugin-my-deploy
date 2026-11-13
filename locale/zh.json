@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Grafana 观测",
+    "description": "监控、日志、链路追踪三合一：在页面右侧配置 Grafana MCP 连接并实时查看连接状态。"
+  }
+}

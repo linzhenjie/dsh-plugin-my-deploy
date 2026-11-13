@@ -1,0 +1,55 @@
+{
+  "name": "my-deploy",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Grafana observability page: an MCP connection panel, a service_name filter, CPU/memory charts, and log and trace exploration driven by a chat that queries Grafana MCP.",
+  "icon": "./icon.svg",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "grafana",
+    "observability",
+    "mcp",
+    "logs",
+    "traces"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "client.js",
+    "client.*.js",
+    "build.mjs",
+    "src",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md"
+  ]
+}

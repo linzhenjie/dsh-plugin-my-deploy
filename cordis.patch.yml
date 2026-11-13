@@ -1,0 +1,9 @@
+# my-deploy bundle patch: inserts the plugin into a profile's layer stack.
+#
+# The Host half (index.js) owns the Grafana MCP connection, the metric/log/trace
+# queries, and the chat exchange. The Client half (client.js) owns the sidebar
+# entry and the observability page it opens: monitor / logs / traces tabs, the
+# service_name filter, the CPU and memory charts, and the MCP connection panel.
+- insert:
+    - id: my-deploy
+      name: 'my-deploy'
