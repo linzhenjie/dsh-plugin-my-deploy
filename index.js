@@ -16,6 +16,7 @@
  *   POST /api/my-deploy/connect        dial the endpoint
  *   POST /api/my-deploy/disconnect     close the session
  *   GET  /api/my-deploy/services       service_name values for the filter
+ *   GET  /api/my-deploy/datasources    datasource menu and its per-view default
  *   GET  /api/my-deploy/metrics        CPU and memory series
  *   GET  /api/my-deploy/logs           log rows
  *   GET  /api/my-deploy/traces         trace rows
@@ -42,7 +43,7 @@ const BASE = '/api/my-deploy';
 /** The panel id shared by the sidebar entry and the main panel key. */
 const PANEL_ID = 'my-deploy';
 /** This Host build's version, recorded once at activation. */
-const VERSION = '0.1.5';
+const VERSION = '0.1.7';
 /** Largest accepted request body; a chat question plus history fits easily. */
 const MAX_BODY_BYTES = 128 * 1024;
 /**
@@ -214,6 +215,8 @@ export function apply(ctx) {
     services: [],
     servicesAt: 0,
     servicesLabel: '',
+    /** The `datasource|range` the cached service list belongs to. */
+    servicesKey: '',
   };
 
   /** The connection view the page renders. */
@@ -248,8 +251,28 @@ export function apply(ctx) {
     };
   }
 
+  /**
+   * The datasources the filter menu offers, plus the auto-picked default per
+   * view. Discovery is cached on the session, so this is cheap after the first
+   * call; a disconnected page simply gets an empty menu.
+   */
+  async function datasourceView() {
+    const session = link.session;
+    if (session === null || link.phase !== 'connected') {
+      return { datasources: [], defaults: { monitor: '', logs: '', traces: '' } };
+    }
+    const config = await store.load();
+    const reader = new GrafanaReader(session, config, ctx.logger);
+    const list = await reader.datasources();
+    return {
+      datasources: list.map((entry) => ({ uid: entry.uid, name: entry.name, type: entry.type, isDefault: entry.isDefault })),
+      defaults: await reader.datasourceDefaults(),
+    };
+  }
+
   async function snapshot() {
     const config = await store.load();
+    const datasources = await datasourceView().catch(() => ({ datasources: [], defaults: { monitor: '', logs: '', traces: '' } }));
     return {
       ok: true,
       capabilities: CAPABILITIES,
@@ -258,6 +281,8 @@ export function apply(ctx) {
       connection: connectionView(),
       services: link.services,
       servicesLabel: link.servicesLabel,
+      datasources: datasources.datasources,
+      datasourceDefaults: datasources.defaults,
     };
   }
 
@@ -280,8 +305,9 @@ export function apply(ctx) {
         link.session = session;
         link.phase = 'connected';
         link.servicesAt = 0;
+        link.servicesKey = '';
         /* Warm the filter in the background: a page load never waits on it. */
-        void refreshServices(false).catch(() => {});
+        void refreshServices(false, '', config.range).catch(() => {});
       } catch (error) {
         link.session = null;
         link.phase = 'error';
@@ -315,17 +341,23 @@ export function apply(ctx) {
     return { session: link.session, config: await store.load() };
   }
 
-  /** Refresh the cached service-name list. */
-  async function refreshServices(force) {
-    if (link.session === null) return { ok: false, values: [] };
-    if (!force && Date.now() - link.servicesAt < SERVICES_TTL_MS) {
+  /**
+   * Refresh the service-name list from the datasource's label values.
+   * The cache is keyed by `datasource|range`, because the same label can list
+   * different services per window or per Loki instance.
+   */
+  async function refreshServices(force, datasource = '', range = '') {
+    if (link.session === null) return { ok: false, values: [], label: '', note: 'not connected' };
+    const key = `${datasource}|${range}`;
+    if (!force && link.servicesKey === key && Date.now() - link.servicesAt < SERVICES_TTL_MS) {
       return { ok: true, values: link.services, label: link.servicesLabel };
     }
     const config = await store.load();
     const reader = new GrafanaReader(link.session, config, ctx.logger);
-    const result = await reader.services();
+    const result = await reader.services(datasource, range === '' ? config.range : range);
     link.services = result.values;
     link.servicesLabel = result.label ?? '';
+    link.servicesKey = key;
     link.servicesAt = Date.now();
     return result;
   }
@@ -391,28 +423,68 @@ export function apply(ctx) {
     send(res, 200, await snapshot());
   }
 
+  /**
+   * The service filter's options: the datasource's `service_name` label values
+   * over the page's own window. `datasource` and `range` come from the filter bar.
+   */
   async function handleServices(req, res, params) {
     const force = params.get('refresh') === '1';
     const { config } = await ensure();
-    const result = await refreshServices(force);
-    send(res, 200, { ok: true, services: result.values ?? [], label: result.label ?? '', service: config.service });
+    const datasource = params.get('datasource') ?? '';
+    const range = rangeOf(params, config);
+    const result = await refreshServices(force, datasource, range);
+    send(res, 200, {
+      ok: result.ok !== false,
+      services: result.values ?? [],
+      label: result.label ?? '',
+      datasource: result.datasource ?? datasource,
+      range,
+      note: result.note ?? '',
+      service: config.service,
+    });
+  }
+
+  /** The datasource menu: every datasource plus the auto-picked default. */
+  async function handleDatasources(req, res) {
+    await ensure();
+    const view = await datasourceView();
+    send(res, 200, { ok: true, datasources: view.datasources, defaults: view.defaults });
+  }
+
+  /** Every dashboard the MCP server can list, optionally filtered by `query`. */
+  async function handleDashboards(req, res, params) {
+    const result = await read(async (reader) => reader.dashboards(params.get('query') ?? '', limitOf(params, 100, 100)));
+    send(res, 200, result);
   }
 
   async function handleMetrics(req, res, params) {
-    const result = await read(async (reader, config) => reader.metrics(params.get('service') ?? config.service, rangeOf(params, config)));
+    const result = await read(async (reader, config) =>
+      reader.metrics(params.get('service') ?? config.service, rangeOf(params, config), params.get('datasource') ?? ''),
+    );
     send(res, 200, result);
   }
 
   async function handleLogs(req, res, params) {
     const result = await read(async (reader, config) =>
-      reader.logs(params.get('service') ?? config.service, rangeOf(params, config), limitOf(params, 60, 400)),
+      reader.logs(
+        params.get('service') ?? config.service,
+        rangeOf(params, config),
+        limitOf(params, 60, 400),
+        params.get('datasource') ?? '',
+        params.get('keyword') ?? '',
+      ),
     );
     send(res, 200, result);
   }
 
   async function handleTraces(req, res, params) {
     const result = await read(async (reader, config) =>
-      reader.traces(params.get('service') ?? config.service, rangeOf(params, config), limitOf(params, 40, 200)),
+      reader.traces(
+        params.get('service') ?? config.service,
+        rangeOf(params, config),
+        limitOf(params, 40, 200),
+        params.get('datasource') ?? '',
+      ),
     );
     send(res, 200, result);
   }
@@ -421,7 +493,14 @@ export function apply(ctx) {
     const body = await readJson(req);
     const question = typeof body.question === 'string' ? body.question.trim().slice(0, 4000) : '';
     if (question === '') throw new HttpError(400, 'question is empty');
-    const tab = body.tab === 'traces' ? 'traces' : body.tab === 'monitor' ? 'monitor' : 'logs';
+    const tab =
+      body.tab === 'traces'
+        ? 'traces'
+        : body.tab === 'monitor'
+          ? 'monitor'
+          : body.tab === 'dashboards'
+            ? 'dashboards'
+            : 'logs';
     const history = Array.isArray(body.history)
       ? body.history
           .slice(-8)
@@ -432,6 +511,7 @@ export function apply(ctx) {
     const { session, config } = await ensure();
     const service = typeof body.service === 'string' ? body.service.slice(0, 200) : config.service;
     const range = typeof body.range === 'string' && body.range !== '' ? body.range : config.range;
+    const datasource = typeof body.datasource === 'string' ? body.datasource.slice(0, 200) : '';
     const reader = new GrafanaReader(session, config, ctx.logger);
 
     /* The window the model is told about is the one the page used. */
@@ -441,6 +521,7 @@ export function apply(ctx) {
       tab,
       service,
       range,
+      datasource,
       history,
       session,
       reader,
@@ -457,6 +538,9 @@ export function apply(ctx) {
       model: answer.model,
       degraded: answer.degraded === true,
       error: answer.error ?? '',
+      /* A dashboard write tells the page to refetch the list. */
+      mutated: answer.mutated === true,
+      created: Array.isArray(answer.created) ? answer.created : [],
     });
   }
 
@@ -500,6 +584,8 @@ export function apply(ctx) {
     { path: '/connect', methods: ['POST'], run: handleConnect },
     { path: '/disconnect', methods: ['POST'], run: handleDisconnect },
     { path: '/services', methods: ['GET', 'HEAD'], run: handleServices },
+    { path: '/datasources', methods: ['GET', 'HEAD'], run: handleDatasources },
+    { path: '/dashboards', methods: ['GET', 'HEAD'], run: handleDashboards },
     { path: '/metrics', methods: ['GET', 'HEAD'], run: handleMetrics },
     { path: '/logs', methods: ['GET', 'HEAD'], run: handleLogs },
     { path: '/traces', methods: ['GET', 'HEAD'], run: handleTraces },

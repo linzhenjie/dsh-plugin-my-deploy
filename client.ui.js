@@ -17,8 +17,10 @@ window.__ModuleLoader__.load({
         TAB_LABELS,
         TABS,
         connectionLabel,
+        copyText,
         formatBytes,
         formatClock,
+        formatDateTime,
         formatDuration,
         formatNumber,
         formatStamp,
@@ -28,7 +30,6 @@ window.__ModuleLoader__.load({
         ratioOf,
         reasonOf,
         reasonText,
-        shortId,
       } = runtime;
 
       /* ---------- icons ---------- */
@@ -176,7 +177,12 @@ window.__ModuleLoader__.load({
         };
         return h(
           'div',
-          { className: 'dp-tabs', role: 'tablist', 'aria-label': t('tabs.label') },
+          {
+            className: 'dp-tabs',
+            role: 'tablist',
+            'aria-label': t('tabs.label'),
+            style: { gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` },
+          },
           h('span', {
             className: 'dp-tabIndicator',
             'aria-hidden': 'true',
@@ -232,7 +238,7 @@ window.__ModuleLoader__.load({
         return h(
           'span',
           { className: 'dp-fieldLabel' },
-          `${t('filter.service')} `,
+          t('filter.service'),
           h(
             'select',
             {
@@ -247,13 +253,41 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /**
+       * The datasource filter: the datasources the MCP server reported for this
+       * view, default-selected. The uid is shown beside the name so a stack with
+       * several datasources of one type is unambiguous.
+       */
+      function DatasourceSelect(props) {
+        const { t, value, options, onChange } = props;
+        if (!Array.isArray(options) || options.length === 0) return null;
+        return h(
+          'span',
+          { className: 'dp-fieldLabel' },
+          t('filter.datasource'),
+          h(
+            'select',
+            {
+              className: 'dp-select',
+              value,
+              'aria-label': t('filter.datasource'),
+              title: options.map((entry) => `${entry.name} = ${entry.uid} (${entry.type})`).join('\n'),
+              onChange: (event) => onChange(event.target.value),
+            },
+            options.map((entry) =>
+              h('option', { key: entry.uid, value: entry.uid }, entry.name === entry.uid ? entry.uid : `${entry.name} · ${entry.uid}`),
+            ),
+          ),
+        );
+      }
+
       /** The range filter. */
       function RangeSelect(props) {
         const { t, value, onChange } = props;
         return h(
           'span',
           { className: 'dp-fieldLabel' },
-          `${t('filter.range')} `,
+          t('filter.range'),
           h(
             'select',
             {
@@ -264,6 +298,34 @@ window.__ModuleLoader__.load({
             },
             RANGES.map((range) => h('option', { key: range, value: range }, t(RANGE_LABELS[range]))),
           ),
+        );
+      }
+
+      /**
+       * The log keyword search. A literal substring filter over the log lines,
+       * applied on Enter so typing one letter never costs a Loki query.
+       */
+      function KeywordInput(props) {
+        const { t, value, onChange, onSubmit } = props;
+        return h(
+          'span',
+          { className: 'dp-fieldLabel' },
+          t('filter.keyword'),
+          h('input', {
+            className: 'dp-input dp-keyword',
+            type: 'search',
+            value,
+            spellCheck: false,
+            placeholder: t('filter.keywordHint'),
+            'aria-label': t('filter.keyword'),
+            title: t('filter.keywordHint'),
+            onChange: (event) => onChange(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key !== 'Enter' || isComposing(event)) return;
+              event.preventDefault();
+              onSubmit();
+            },
+          }),
         );
       }
 
@@ -411,6 +473,69 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /* ---------- dashboards view ---------- */
+
+      /** One row per dashboard: title, folder + uid, url, tags. Read-only. */
+      function DashboardList(props) {
+        const { t, piece, onConnect, onRetry } = props;
+        if (piece.phase === 'loading') return h(StatusNote, { text: t('dashboards.loading') });
+        if (piece.phase === 'error') {
+          return h(StatusNote, {
+            tone: 'error',
+            text: t('status.error'),
+            detail: piece.detail,
+            action: h('button', { type: 'button', className: 'dp-btn', onClick: onRetry }, t('status.retry')),
+          });
+        }
+        const data = piece.data;
+        if (data === null) return h(EmptyState, { title: t('dashboards.empty'), hint: t('dashboards.emptyHint') });
+        const reason = reasonOf(data);
+        if (reason !== '') {
+          const offline = reason === 'not-connected' || reason === 'not-configured';
+          return h(EmptyState, {
+            title: reasonText(t, reason),
+            hint: offline ? t('status.connectHint') : data.note,
+            action: offline
+              ? h('button', { type: 'button', className: 'dp-btn', onClick: onConnect }, t('dashboards.connect'))
+              : h('button', { type: 'button', className: 'dp-btn', onClick: onRetry }, t('status.retry')),
+          });
+        }
+        if (data.rows.length === 0) {
+          return h(EmptyState, { title: t('dashboards.empty'), hint: t('dashboards.emptyHint') });
+        }
+        return h(
+          React.Fragment,
+          null,
+          h(
+            'div',
+            { className: 'dp-listHead' },
+            h('span', null, t('dashboards.count').replace('{count}', String(data.total))),
+            data.tool === '' ? null : h('span', { className: 'dp-note' }, `${t('monitor.tool')}: ${data.tool}`),
+          ),
+          h(
+            'div',
+            { className: 'dp-rows' },
+            data.rows.map((row) => {
+              const meta = [row.folder, row.uid].filter((part) => part !== '').join(' · ');
+              return h(
+                'div',
+                { key: row.uid === '' ? row.title : row.uid, className: 'dp-dashRow' },
+                h('span', { className: 'dp-dashTitle' }, row.title),
+                h('span', { className: 'dp-dashMeta' }, meta),
+                row.url === '' ? null : h('span', { className: 'dp-dashUrl', title: row.url }, row.url),
+                row.tags.length === 0
+                  ? null
+                  : h(
+                      'span',
+                      { className: 'dp-tools' },
+                      row.tags.map((tag) => h('span', { key: tag, className: 'dp-chip' }, tag)),
+                    ),
+              );
+            }),
+          ),
+        );
+      }
+
       /* ---------- log view ---------- */
 
       function LogList(props) {
@@ -484,9 +609,22 @@ window.__ModuleLoader__.load({
 
       /* ---------- trace view ---------- */
 
+      /**
+       * Columns: trace id (click to expand, with a copy button), service, full
+       * start time, duration, span count. The root name stays as secondary text
+       * under the id, and the span tree opens across the whole row.
+       */
       function TraceList(props) {
         const { t, piece, onConnect, onRetry } = props;
         const [expanded, setExpanded] = React.useState('');
+        const [copyState, setCopyState] = React.useState({ key: '', ok: false });
+        const copyTimer = React.useRef(null);
+        React.useEffect(
+          () => () => {
+            if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+          },
+          [],
+        );
         if (piece.phase === 'loading') return h(StatusNote, { text: t('traces.loading') });
         if (piece.phase === 'error') {
           return h(StatusNote, {
@@ -511,6 +649,18 @@ window.__ModuleLoader__.load({
         }
         if (data.traces.length === 0) return h(EmptyState, { title: t('traces.empty'), hint: data.note || t('traces.emptyHint') });
         const slowest = data.traces.reduce((top, trace) => (trace.durationMs > top ? trace.durationMs : top), 0);
+
+        /** Copy the full id; the button briefly reports success or failure. */
+        const copyTraceId = async (key, traceId) => {
+          const ok = await copyText(traceId);
+          setCopyState({ key, ok });
+          if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+          copyTimer.current = window.setTimeout(() => {
+            setCopyState({ key: '', ok: false });
+            copyTimer.current = null;
+          }, 1600);
+        };
+
         return h(
           React.Fragment,
           null,
@@ -522,36 +672,73 @@ window.__ModuleLoader__.load({
           ),
           h(
             'div',
+            { className: 'dp-traceHead' },
+            h('span', null, t('traces.traceId')),
+            h('span', null, t('traces.service')),
+            h('span', null, t('traces.time')),
+            h('span', null, t('traces.duration')),
+            h('span', null, t('traces.spans')),
+          ),
+          h(
+            'div',
             { className: 'dp-rows' },
             data.traces.map((trace, at) => {
               const key = `${trace.traceId}-${at}`;
               const open = expanded === key;
+              /* The full date and time, not just the clock part. */
+              const stamp = formatDateTime(trace.start) || formatStamp(trace.start) || '—';
+              const copied = copyState.key === key;
+              const copyLabel = copied ? (copyState.ok ? t('common.copied') : t('traces.copyFailed')) : t('common.copy');
               return h(
-                'button',
+                'div',
                 {
                   key,
-                  type: 'button',
                   className: 'dp-traceRow',
                   'data-error': trace.error ? 'true' : 'false',
-                  'aria-expanded': open,
-                  onClick: () => setExpanded(open ? '' : key),
+                  'data-open': open ? 'true' : 'false',
                 },
                 h(
-                  'span',
-                  null,
-                  h('span', { className: 'dp-traceName' }, trace.root || t('traces.spansTitle')),
+                  'div',
+                  { className: 'dp-traceIdCell' },
                   h(
-                    'span',
-                    { className: 'dp-traceMeta' },
-                    `${shortId(trace.traceId, 16)}${trace.service === '' ? '' : ` · ${trace.service}`} · ${formatClock(trace.start) || formatStamp(trace.start)}`,
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dp-traceId',
+                      'aria-expanded': open,
+                      'aria-label': `${t('traces.expand')}: ${trace.traceId || t('common.none')}`,
+                      title: `${t('traces.expand')} · ${trace.traceId}`,
+                      onClick: () => setExpanded(open ? '' : key),
+                    },
+                    h('span', { className: 'dp-traceCaret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
+                    h('span', { className: 'dp-traceIdText' }, trace.traceId || t('common.none')),
                   ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dp-copyBtn',
+                      'data-state': copied ? (copyState.ok ? 'ok' : 'fail') : 'idle',
+                      title: t('traces.copyTraceId'),
+                      'aria-label': t('traces.copyTraceId'),
+                      onClick: () => void copyTraceId(key, trace.traceId),
+                    },
+                    copyLabel,
+                  ),
+                  trace.root === '' ? null : h('span', { className: 'dp-traceRoot', title: trace.root }, trace.root),
+                ),
+                h('span', { className: 'dp-traceService', title: trace.service }, trace.service || '—'),
+                h('span', { className: 'dp-traceTime', title: stamp }, stamp),
+                h(
+                  'span',
+                  { className: 'dp-traceDur' },
+                  h('span', { className: 'dp-spanDur' }, formatDuration(trace.durationMs)),
                   h('span', { className: 'dp-durBar', 'aria-hidden': 'true' }, h('span', { className: 'dp-durFill', style: { width: `${Math.round(ratioOf(trace.durationMs, slowest) * 100)}%` } })),
                 ),
-                h('span', { className: 'dp-spanDur' }, formatDuration(trace.durationMs)),
                 h('span', { className: 'dp-spanDur' }, `${trace.spanCount} ${t('traces.spans')}`),
                 open
                   ? h(
-                      'span',
+                      'div',
                       { className: 'dp-spans' },
                       trace.spans.length === 0
                         ? h('span', { className: 'dp-note' }, t('common.none'))
@@ -578,7 +765,9 @@ window.__ModuleLoader__.load({
       /* ---------- chat ---------- */
 
       function ChatPanel(props) {
-        const { t, tab, entries, busy, connection, draft, onChangeDraft, onSend, onClear } = props;
+        const { t, tab, entries, busy, connection, draft, onChangeDraft, onSend, onClear, hint, placeholder } = props;
+        const prompt = typeof placeholder === 'string' && placeholder !== '' ? placeholder : t('chat.placeholder');
+        const note = typeof hint === 'string' && hint !== '' ? hint : t('chat.hint');
         const log = React.useRef(null);
         React.useEffect(() => {
           const node = log.current;
@@ -645,8 +834,8 @@ window.__ModuleLoader__.load({
               className: 'dp-textarea',
               value: draft,
               rows: 1,
-              placeholder: connected ? t('chat.placeholder') : t('chat.needConnect'),
-              'aria-label': t('chat.placeholder'),
+              placeholder: connected ? prompt : t('chat.needConnect'),
+              'aria-label': prompt,
               disabled: !connected,
               onChange: (event) => onChangeDraft(event.target.value),
               onKeyDown: (event) => {
@@ -658,7 +847,7 @@ window.__ModuleLoader__.load({
             }),
             h('button', { type: 'button', className: 'dp-send', disabled: !canSend, onClick: onSend }, t('chat.send')),
           ),
-          h('p', { className: 'dp-hint' }, t('chat.hint')),
+          h('p', { className: 'dp-hint' }, note),
         );
       }
 
@@ -961,11 +1150,14 @@ window.__ModuleLoader__.load({
         ChatPanel,
         Chart,
         ConnectionPill,
+        DashboardList,
+        DatasourceSelect,
         EmptyState,
         Field,
         IconClose,
         IconPlug,
         IconRefresh,
+        KeywordInput,
         LogList,
         McpDrawer,
         MetricCard,

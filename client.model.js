@@ -9,9 +9,14 @@ window.__ModuleLoader__.load({
     return (runtime) => {
       const { textOf } = runtime;
 
-      /** Tabs in render order. Adding a tab means a registry entry and a view. */
-      const TABS = ['monitor', 'logs', 'traces'];
-      const TAB_LABELS = { monitor: 'tab.monitor', logs: 'tab.logs', traces: 'tab.traces' };
+      /** Tabs in render order; the dashboards view sits first. */
+      const TABS = ['dashboards', 'monitor', 'logs', 'traces'];
+      const TAB_LABELS = {
+        dashboards: 'tab.dashboards',
+        monitor: 'tab.monitor',
+        logs: 'tab.logs',
+        traces: 'tab.traces',
+      };
       /** Range tags the Host understands, shortest first. */
       const RANGES = ['5m', '15m', '1h', '6h', '24h'];
       const RANGE_LABELS = {
@@ -27,6 +32,8 @@ window.__ModuleLoader__.load({
       const TAB_KEY = 'dsh.my-deploy.tab.v1';
       const RANGE_KEY = 'dsh.my-deploy.range.v1';
       const SERVICE_KEY = 'dsh.my-deploy.service.v1';
+      const DATASOURCE_KEY = 'dsh.my-deploy.datasource.v1';
+      const KEYWORD_KEY = 'dsh.my-deploy.keyword.v1';
 
       const DEFAULT_CONFIG = {
         transport: 'streamable-http',
@@ -62,16 +69,17 @@ window.__ModuleLoader__.load({
        * is *not* named after the tab: every reader and writer of `pieces` goes
        * through this map so a tab id can never be used as a piece key by accident.
        */
-      const PIECE_KEYS = { monitor: 'metrics', logs: 'logs', traces: 'traces' };
+      const PIECE_KEYS = { dashboards: 'dashboards', monitor: 'metrics', logs: 'logs', traces: 'traces' };
 
       /** The piece key for one tab id, or undefined for an unknown id. */
       function pieceKeyOf(tab) {
         return Object.prototype.hasOwnProperty.call(PIECE_KEYS, tab) ? PIECE_KEYS[tab] : undefined;
       }
 
-      /** The three pieces, all unloaded. */
+      /** The pieces, all unloaded. */
       function initialPieces() {
         return {
+          dashboards: piece('idle', null, ''),
           metrics: piece('idle', null, ''),
           logs: piece('idle', null, ''),
           traces: piece('idle', null, ''),
@@ -130,6 +138,23 @@ window.__ModuleLoader__.load({
       function writeRange(range) {
         try {
           window.localStorage.setItem(RANGE_KEY, range);
+        } catch (error) {
+          /* storage is optional */
+        }
+      }
+
+      /** The last log keyword search, kept across reloads. */
+      function readKeyword() {
+        try {
+          return textOf(window.localStorage.getItem(KEYWORD_KEY));
+        } catch (error) {
+          return '';
+        }
+      }
+
+      function writeKeyword(value) {
+        try {
+          window.localStorage.setItem(KEYWORD_KEY, textOf(value));
         } catch (error) {
           /* storage is optional */
         }
@@ -197,14 +222,73 @@ window.__ModuleLoader__.load({
         };
       }
 
+      /** The datasource types each view can query. */
+      const DATASOURCE_TYPES = {
+        monitor: ['prometheus', 'mimir', 'cortex'],
+        logs: ['loki', 'victorialogs', 'elasticsearch', 'opensearch'],
+        traces: ['tempo', 'jaeger', 'zipkin'],
+      };
+
+      /**
+       * The datasources one view may use, default-first. A tab whose family has
+       * no match falls back to the whole list, so a mistyped datasource type
+       * still leaves the menu usable.
+       */
+      function datasourcesForTab(list, tab) {
+        const entries = Array.isArray(list) ? list : [];
+        const types = DATASOURCE_TYPES[tab] ?? [];
+        const matched = entries.filter((entry) => types.some((type) => String(entry.type).toLowerCase().includes(type)));
+        const pool = matched.length > 0 ? matched : entries;
+        return [...pool].sort((left, right) => Number(right.isDefault === true) - Number(left.isDefault === true));
+      }
+
+      /** Read the last datasource choice per view. */
+      function readDatasources() {
+        try {
+          const raw = window.localStorage.getItem(DATASOURCE_KEY);
+          const parsed = raw === null ? null : JSON.parse(raw);
+          if (parsed === null || typeof parsed !== 'object') return {};
+          const chosen = {};
+          for (const tab of TABS) if (typeof parsed[tab] === 'string') chosen[tab] = parsed[tab];
+          return chosen;
+        } catch (error) {
+          return {};
+        }
+      }
+
+      function writeDatasource(tab, uid) {
+        try {
+          const current = readDatasources();
+          window.localStorage.setItem(DATASOURCE_KEY, JSON.stringify({ ...current, [tab]: uid }));
+        } catch (error) {
+          /* storage is optional */
+        }
+      }
+
       /** Normalize one `/state` answer. */
       function normalizeState(body) {
         const source = body !== null && typeof body === 'object' ? body : {};
+        const defaults = source.datasourceDefaults !== null && typeof source.datasourceDefaults === 'object' ? source.datasourceDefaults : {};
         return {
           config: normalizeConfig(source.config),
           connection: normalizeConnection(source.connection),
           services: Array.isArray(source.services) ? source.services.filter((name) => typeof name === 'string') : [],
           servicesLabel: textOf(source.servicesLabel),
+          datasources: Array.isArray(source.datasources)
+            ? source.datasources
+                .filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.uid === 'string' && entry.uid !== '')
+                .map((entry) => ({
+                  uid: entry.uid,
+                  name: textOf(entry.name) || entry.uid,
+                  type: textOf(entry.type),
+                  isDefault: entry.isDefault === true,
+                }))
+            : [],
+          datasourceDefaults: {
+            monitor: textOf(defaults.monitor),
+            logs: textOf(defaults.logs),
+            traces: textOf(defaults.traces),
+          },
           file: textOf(source.file),
           capabilities: Array.isArray(source.capabilities) ? source.capabilities.filter((tag) => typeof tag === 'string') : [],
         };
@@ -260,14 +344,21 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** The empty transcript for both chat tabs. */
+      /** The transcript key one tab writes to; monitor has no chat. */
+      function chatKeyOf(tab) {
+        if (tab === 'traces') return 'traces';
+        if (tab === 'dashboards') return 'dashboards';
+        return 'logs';
+      }
+
+      /** The empty transcript for the views that carry a chat. */
       function initialChat() {
-        return { logs: [], traces: [] };
+        return { dashboards: [], logs: [], traces: [] };
       }
 
       /** Append one message to one chat tab. */
       function appendChat(chat, tab, entry) {
-        const key = tab === 'traces' ? 'traces' : 'logs';
+        const key = chatKeyOf(tab);
         return { ...chat, [key]: [...chat[key], entry] };
       }
 
@@ -311,6 +402,31 @@ window.__ModuleLoader__.load({
           note: textOf(source.note),
           tool: textOf(source.tool),
           query: textOf(source.query),
+          rows,
+        };
+      }
+
+      /** A dashboard list payload: rows plus the count the server reported. */
+      function normalizeDashboards(payload) {
+        const source = payload !== null && typeof payload === 'object' ? payload : {};
+        const rows = Array.isArray(source.rows)
+          ? source.rows
+              .filter((row) => row !== null && typeof row === 'object')
+              .map((row) => ({
+                uid: textOf(row.uid),
+                title: textOf(row.title),
+                url: textOf(row.url),
+                folder: textOf(row.folder),
+                tags: Array.isArray(row.tags) ? row.tags.filter((tag) => typeof tag === 'string') : [],
+              }))
+          : [];
+        return {
+          ok: source.ok === true,
+          reason: textOf(source.reason),
+          note: textOf(source.note),
+          tool: textOf(source.tool),
+          query: textOf(source.query),
+          total: typeof source.total === 'number' ? source.total : rows.length,
           rows,
         };
       }
@@ -410,26 +526,33 @@ window.__ModuleLoader__.load({
         TAB_LABELS,
         appendChat,
         chatHistory,
+        chatKeyOf,
         chatMessage,
         connectionLabel,
+        datasourcesForTab,
         initialChat,
         initialPieces,
         markFailed,
         markLoading,
         markSettled,
         normalizeConfig,
+        normalizeDashboards,
         normalizeLogs,
         normalizeMetrics,
         normalizeState,
         normalizeTraces,
         piece,
         pieceKeyOf,
+        readDatasources,
+        readKeyword,
         readRange,
         readService,
         readTab,
         reasonOf,
         reasonText,
         supportsCapabilities,
+        writeDatasource,
+        writeKeyword,
         writeRange,
         writeService,
         writeTab,

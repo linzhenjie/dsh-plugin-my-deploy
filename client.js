@@ -82,6 +82,45 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** Supply the plugin's own `t` when the shell did not seat one. */
+    function withLocale(Page, t) {
+      return function LocalizedPanel(props) {
+        if (props !== null && typeof props === 'object' && typeof props.t === 'function') return Page(props);
+        return Page({ ...(props === null || typeof props !== 'object' ? {} : props), t });
+      };
+    }
+
+    /**
+     * Wrap the registered panel so a throw can never disappear into the shell's
+     * own entry boundary — that boundary retires the entry and renders an empty
+     * box, which is exactly a blank panel with the reason only in the console.
+     * @param Page - the panel component.
+     * @param report - the page reporter.
+     * @param h - React.createElement.
+     */
+    function guardPanel(Page, report, h) {
+      let reportedPage = false;
+      return function GuardedPanel(props) {
+        if (!reportedPage) {
+          reportedPage = true;
+          report('panel.enter', 'panel component entered', String(typeof Page));
+        }
+        try {
+          return Page(props);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          report('panel.renderFailed', message, error instanceof Error ? String(error.stack ?? '') : '');
+          return h(
+            'div',
+            { className: 'dp-fail', role: 'alert' },
+            h('h1', null, '插件渲染失败 / this panel failed to render'),
+            h('p', null, '错误已写入 my-deploy-diagnostics.json。 / The error was recorded.'),
+            h('code', null, message),
+          );
+        }
+      };
+    }
+
     async function apply(ctx) {
       try {
         const [i18n, styles] = await Promise.all([chunk('client.i18n.js'), chunk('client.styles.js')]);
@@ -127,6 +166,43 @@ window.__ModuleLoader__.load({
           };
         }, 'my-deploy: page reporters');
 
+        /*
+         * A crash raised while the shell assembles an entry (its own kit, before
+         * the plugin component runs) never reaches this plugin's boundary: the
+         * shell logs it and retires the entry. Mirror a bounded number of those
+         * messages into the trail so the reason is not console-only.
+         */
+        ctx.effect(() => {
+          const original = typeof console !== 'undefined' && typeof console.error === 'function' ? console.error.bind(console) : null;
+          if (original === null) return () => {};
+          let budget = 8;
+          const patched = (...args) => {
+            try {
+              const error = args.find((value) => value instanceof Error);
+              const first = args[0];
+              const textual = typeof first === 'string' ? first : '';
+              const interesting = textual.includes('slot') || error !== undefined;
+              if (budget > 0 && interesting) {
+                budget -= 1;
+                report(
+                  'slot.crash',
+                  textual === '' ? 'console.error with an Error' : textual,
+                  error === undefined
+                    ? args.map((value) => String(value)).join(' ').slice(0, 2000)
+                    : String(error.stack ?? error.message).slice(0, 2500),
+                );
+              }
+            } catch (error) {
+              /* reporting must never break logging */
+            }
+            original(...args);
+          };
+          console.error = patched;
+          return () => {
+            if (console.error === patched) console.error = original;
+          };
+        }, 'my-deploy: console reporter');
+
         ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
             {
@@ -142,12 +218,11 @@ window.__ModuleLoader__.load({
 
         ctx.slots.inject('main', () =>
           ctx.slots.register(
-            {
-              name: 'main',
-              key: PANEL_ID,
-              locale: NS,
-            },
-            page.Page,
+            /* No `locale` seat here on purpose: the plugin renders its own
+               dictionaries, so the panel cannot depend on the shell resolving a
+               locale namespace while it assembles this entry. */
+            { name: 'main', key: PANEL_ID },
+            withLocale(guardPanel(page.Page, report, h), t),
           ),
         );
         report('apply.ok', 'plugin applied', `chunks=${CHUNKS.join(',')}`);

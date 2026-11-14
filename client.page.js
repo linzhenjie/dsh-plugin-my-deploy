@@ -17,7 +17,10 @@ window.__ModuleLoader__.load({
         IDLE_CONNECTION,
         ConnectionPill,
         ChatPanel,
+        DashboardList,
+        DatasourceSelect,
         IconRefresh,
+        KeywordInput,
         LogList,
         McpDrawer,
         MonitorView,
@@ -30,9 +33,13 @@ window.__ModuleLoader__.load({
         appendChat,
         ask,
         chatHistory,
+        chatKeyOf,
         chatMessage,
         connect,
+        datasourcesForTab,
         disconnect,
+        fetchDashboards,
+        fetchDatasources,
         fetchLogs,
         fetchMetrics,
         fetchServices,
@@ -48,11 +55,15 @@ window.__ModuleLoader__.load({
         pieceKeyOf,
         React,
         reasonText,
+        readDatasources,
+        readKeyword,
         readRange,
         readService,
         readTab,
         saveConfig,
         supportsCapabilities,
+        writeDatasource,
+        writeKeyword,
         writeRange,
         writeService,
         writeTab,
@@ -126,12 +137,17 @@ window.__ModuleLoader__.load({
           connection: IDLE_CONNECTION,
           services: [],
           servicesLabel: '',
+          datasources: [],
+          datasourceDefaults: { monitor: '', logs: '', traces: '' },
           file: '',
           capabilities: [],
         });
         const [tab, setTab] = React.useState(() => readTab());
         const [service, setService] = React.useState(() => readService());
         const [range, setRange] = React.useState(() => readRange());
+        const [keyword, setKeyword] = React.useState(() => readKeyword());
+        const [keywordDraft, setKeywordDraft] = React.useState(keyword);
+        const [chosen, setChosen] = React.useState(() => readDatasources());
         const [drawer, setDrawer] = React.useState(false);
         const [pieces, setPieces] = React.useState(initialPieces);
         const [chat, setChat] = React.useState(initialChat);
@@ -237,23 +253,70 @@ window.__ModuleLoader__.load({
           return () => clearInterval(timer);
         }, [refreshState]);
 
-        /* The filter fills itself once the session is up. */
+        /* The datasource menu fills itself once the session is up. */
         React.useEffect(() => {
-          if (view.connection.status !== 'connected' || view.services.length > 0) return undefined;
+          if (view.connection.status !== 'connected' || view.datasources.length > 0) return undefined;
           let cancelled = false;
           void (async () => {
             try {
-              const result = await fetchServices(true);
+              const result = await fetchDatasources();
               if (cancelled || !alive.current || !result.ok) return;
-              setView((previous) => ({ ...previous, services: result.services }));
+              setView((previous) => ({
+                ...previous,
+                datasources: result.datasources,
+                datasourceDefaults: result.defaults,
+              }));
             } catch (error) {
-              /* the filter still offers "all services" */
+              /* the menu stays hidden; the Host still resolves a datasource */
             }
           })();
           return () => {
             cancelled = true;
           };
-        }, [view.connection.status, view.services.length]);
+        }, [view.connection.status, view.datasources.length]);
+
+        /* The datasources this view offers, and the one it is querying. */
+        const pickDatasource = (viewKey) => {
+          const options = datasourcesForTab(view.datasources, viewKey);
+          const wanted = chosen[viewKey];
+          if (typeof wanted === 'string' && options.some((entry) => entry.uid === wanted)) return wanted;
+          const preferred = view.datasourceDefaults[viewKey];
+          if (typeof preferred === 'string' && options.some((entry) => entry.uid === preferred)) return preferred;
+          return options.length > 0 ? options[0].uid : '';
+        };
+        const datasourceOptions = datasourcesForTab(view.datasources, tab);
+        const datasource = pickDatasource(tab);
+        /* The service filter reads Loki's label values, so it follows the logs
+           view's datasource rather than the tab in front of it. */
+        const logsDatasource = pickDatasource('logs');
+
+        /*
+         * The service menu is the datasource's `service_name` label values over
+         * the page's own window, read through the MCP label-values tool. It is
+         * refetched when the connection, the logs datasource, the range, or the
+         * refresh action changes — never from a hard-coded list.
+         */
+        const servicesKey = `${view.connection.status}|${logsDatasource}|${range}|${tick}`;
+        const servicesFetched = React.useRef('');
+        React.useEffect(() => {
+          if (view.connection.status !== 'connected') return undefined;
+          if (servicesFetched.current === servicesKey) return undefined;
+          servicesFetched.current = servicesKey;
+          let cancelled = false;
+          void (async () => {
+            try {
+              const result = await fetchServices(true, logsDatasource, range);
+              if (cancelled || !alive.current || !result.ok) return;
+              setView((previous) => ({ ...previous, services: result.services, servicesLabel: result.label }));
+            } catch (error) {
+              /* retry on the next key change */
+              servicesFetched.current = '';
+            }
+          })();
+          return () => {
+            cancelled = true;
+          };
+        }, [servicesKey, logsDatasource, range, view.connection.status]);
 
         /* One load per view switch, filter change, refresh, or reconnect. */
         const loadPiece = React.useCallback(
@@ -262,9 +325,10 @@ window.__ModuleLoader__.load({
             setPieces((previous) => markLoading(previous, kind));
             try {
               let data;
-              if (kind === 'metrics') data = await fetchMetrics(service, range);
-              else if (kind === 'logs') data = await fetchLogs(service, range, 60);
-              else data = await fetchTraces(service, range, 40);
+              if (kind === 'metrics') data = await fetchMetrics(service, range, datasource);
+              else if (kind === 'logs') data = await fetchLogs(service, range, 60, datasource, keyword);
+              else if (kind === 'dashboards') data = await fetchDashboards('');
+              else data = await fetchTraces(service, range, 40, datasource);
               if (!alive.current || token !== seq.current) return;
               setPieces((previous) => markSettled(previous, kind, data, ''));
             } catch (error) {
@@ -272,7 +336,7 @@ window.__ModuleLoader__.load({
               setPieces((previous) => markFailed(previous, kind, messageOf(error)));
             }
           },
-          [service, range],
+          [service, range, datasource, keyword],
         );
 
         React.useEffect(() => {
@@ -280,7 +344,7 @@ window.__ModuleLoader__.load({
           const kind = pieceKeyOf(tab);
           if (kind === undefined) return;
           void loadPiece(kind);
-        }, [boot.phase, tab, service, range, tick, view.connection.status, loadPiece]);
+        }, [boot.phase, tab, service, range, datasource, keyword, tick, view.connection.status, loadPiece]);
 
         /* Escape closes the drawer, like any other panel. */
         React.useEffect(() => {
@@ -310,6 +374,20 @@ window.__ModuleLoader__.load({
         const selectRange = (next) => {
           setRange(next);
           writeRange(next);
+        };
+
+        /** Pick a datasource for this view; it is remembered per view. */
+        const selectDatasource = (uid) => {
+          setChosen((previous) => ({ ...previous, [tab]: uid }));
+          writeDatasource(tab, uid);
+        };
+
+        /** Apply the log keyword; Enter (or the refresh action) is the trigger. */
+        const applyKeyword = () => {
+          const next = keywordDraft.trim();
+          setKeyword(next);
+          writeKeyword(next);
+          setTick((value) => value + 1);
         };
 
         const refresh = () => {
@@ -359,13 +437,13 @@ window.__ModuleLoader__.load({
         const sendQuestion = async () => {
           const question = draft.trim();
           if (question === '' || busyChat || tab === 'monitor') return;
-          const key = tab;
+          const key = chatKeyOf(tab);
           const history = chatHistory(chat[key]);
           setChat((previous) => appendChat(previous, key, chatMessage('user', question)));
           setDraft('');
           setBusyChat(true);
           try {
-            const answer = await ask({ question, tab: key, service, range, history });
+            const answer = await ask({ question, tab: key, service, range, datasource, history });
             if (!alive.current) return;
             if (answer.ok !== true) {
               setChat((previous) =>
@@ -396,6 +474,11 @@ window.__ModuleLoader__.load({
             if (key === 'traces' && answer.traces !== null && answer.traces.ok === true) {
               setPieces((previous) => markSettled(previous, 'traces', answer.traces, ''));
             }
+            /* A dashboard was created or updated: reload the list so it shows. */
+            if (key === 'dashboards' && answer.mutated === true) {
+              showFlash(t('dashboards.reloaded'));
+              setTick((value) => value + 1);
+            }
           } catch (error) {
             if (!alive.current) return;
             setChat((previous) => appendChat(previous, key, chatMessage('assistant', messageOf(error), { tone: 'error' })));
@@ -404,7 +487,7 @@ window.__ModuleLoader__.load({
           }
         };
 
-        const clearChat = () => setChat((previous) => ({ ...previous, [tab === 'traces' ? 'traces' : 'logs']: [] }));
+        const clearChat = () => setChat((previous) => ({ ...previous, [chatKeyOf(tab)]: [] }));
 
         /* ---------- render ---------- */
 
@@ -441,12 +524,26 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'dp-toolbar' },
-            h(ServiceSelect, { t, value: service, services: view.services, onChange: selectService }),
-            h(RangeSelect, { t, value: range, onChange: selectRange }),
+            /* Datasource → range → service → (logs only) keyword. The datasource
+               comes first because every query is scoped to it. The dashboards
+               view lists Grafana objects, so only the datasource matters there:
+               it is what a created panel points at. */
+            h(DatasourceSelect, { t, value: datasource, options: datasourceOptions, onChange: selectDatasource }),
+            tab === 'dashboards' ? null : h(RangeSelect, { t, value: range, onChange: selectRange }),
+            tab === 'dashboards'
+              ? null
+              : h(ServiceSelect, { t, value: service, services: view.services, onChange: selectService }),
+            tab === 'logs'
+              ? h(KeywordInput, {
+                  t,
+                  value: keywordDraft,
+                  onChange: setKeywordDraft,
+                  onSubmit: applyKeyword,
+                })
+              : null,
             h('span', { className: 'dp-spacer' }),
             boot.phase === 'loading' ? h('span', { className: 'dp-note' }, t('common.loading')) : null,
             flash === '' ? null : h('span', { className: 'dp-note' }, flash),
-            view.servicesLabel === '' ? null : h('span', { className: 'dp-note' }, `label: ${view.servicesLabel}`),
           ),
           h(
             'div',
@@ -469,11 +566,13 @@ window.__ModuleLoader__.load({
                       ),
                     })
                   : null,
-                tab === 'monitor'
-                  ? h(MonitorView, { t, piece: active, onConnect: connectAction, onRetry: refresh })
-                  : tab === 'logs'
-                    ? h(LogList, { t, piece: active, onConnect: connectAction, onRetry: refresh })
-                    : h(TraceList, { t, piece: active, onConnect: connectAction, onRetry: refresh }),
+                tab === 'dashboards'
+                  ? h(DashboardList, { t, piece: active, onConnect: connectAction, onRetry: refresh })
+                  : tab === 'monitor'
+                    ? h(MonitorView, { t, piece: active, onConnect: connectAction, onRetry: refresh })
+                    : tab === 'logs'
+                      ? h(LogList, { t, piece: active, onConnect: connectAction, onRetry: refresh })
+                      : h(TraceList, { t, piece: active, onConnect: connectAction, onRetry: refresh }),
               ),
             ),
             tab === 'monitor'
@@ -481,13 +580,15 @@ window.__ModuleLoader__.load({
               : h(ChatPanel, {
                   t,
                   tab,
-                  entries: chat[tab === 'traces' ? 'traces' : 'logs'],
+                  entries: chat[chatKeyOf(tab)],
                   busy: busyChat,
                   connection: view.connection,
                   draft,
                   onChangeDraft: setDraft,
                   onSend: () => void sendQuestion(),
                   onClear: clearChat,
+                  placeholder: tab === 'dashboards' ? t('chat.dashboardsPlaceholder') : '',
+                  hint: tab === 'dashboards' ? t('chat.dashboardsHint') : '',
                 }),
           ),
           drawer

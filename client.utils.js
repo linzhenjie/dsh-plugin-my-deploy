@@ -46,6 +46,13 @@ window.__ModuleLoader__.load({
         return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
       }
 
+      /** `YYYY-MM-DD HH:MM:SS`, the full date and time a trace row shows. */
+      function formatDateTime(ms) {
+        if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
+        const date = new Date(ms);
+        return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+      }
+
       /** `MM-DD HH:MM:SS` for a millisecond timestamp, the long form a row shows. */
       function formatStamp(ms) {
         if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
@@ -99,17 +106,35 @@ window.__ModuleLoader__.load({
         return text.length <= length ? text : text.slice(0, length);
       }
 
-      /** Copy through the async API, falling back to a selection copy. */
+      /** Copy through the async API, falling back to a selection copy when the
+       *  clipboard API is unavailable (insecure context) or was denied. */
       async function copyText(value) {
+        const text = typeof value === 'string' ? value : String(value ?? '');
+        if (text === '') return false;
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            await navigator.clipboard.writeText(value);
+            await navigator.clipboard.writeText(text);
             return true;
           }
         } catch (error) {
           /* permission or insecure context: fall through */
         }
-        return false;
+        try {
+          if (typeof document === 'undefined' || typeof document.execCommand !== 'function') return false;
+          const area = document.createElement('textarea');
+          area.value = text;
+          area.setAttribute('readonly', '');
+          area.style.position = 'fixed';
+          area.style.top = '-1000px';
+          area.style.opacity = '0';
+          document.body.appendChild(area);
+          area.select();
+          const ok = document.execCommand('copy');
+          area.remove();
+          return ok === true;
+        } catch (error) {
+          return false;
+        }
       }
 
       /** A clamped ratio in [0, 1] for a bar width. */
@@ -125,6 +150,7 @@ window.__ModuleLoader__.load({
         createId,
         formatBytes,
         formatClock,
+        formatDateTime,
         formatDuration,
         formatNumber,
         formatStamp,

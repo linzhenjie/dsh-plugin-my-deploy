@@ -49,7 +49,7 @@
   display: grid;
   flex: none;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-width: min(300px, 46vw);
+  min-width: min(380px, 52vw);
   padding: 4px;
   border-radius: var(--dsw-radius-lg);
   background: var(--dsw-alias-bg-module-platform);
@@ -207,24 +207,34 @@
 .dp-textarea:focus-visible,
 .dp-send:focus-visible,
 .dp-logRow:focus-visible,
-.dp-traceRow:focus-visible {
+.dp-traceId:focus-visible,
+.dp-copyBtn:focus-visible {
   outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
 }
 
-/* ---------- toolbar (service + range) ---------- */
+/* ---------- toolbar (datasource + range + service + keyword) ---------- */
 
 .dp-toolbar {
   display: flex;
   flex: none;
-  flex-wrap: wrap;
+  /* Filters stay on one line: the keyword box must not wrap onto a second row.
+     A narrow panel scrolls the toolbar sideways instead of breaking the row. */
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px 10px;
   padding: 10px clamp(16px, 3vw, 28px);
   border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .dp-fieldLabel {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
@@ -248,6 +258,17 @@
 .dp-spacer {
   flex: 1;
   min-width: 0;
+}
+
+/* The log keyword box: one narrow field beside the other filters. The extra
+   selector beats the generic `.dp-input { width: 100% }` declared below. */
+.dp-fieldLabel .dp-keyword {
+  width: 190px;
+  min-width: 120px;
+  height: 30px;
+  flex: 0 1 190px;
+  box-sizing: border-box;
+  padding: 0 9px;
 }
 
 .dp-note {
@@ -443,6 +464,50 @@
   overflow: hidden;
 }
 
+/* ---------- dashboard rows ---------- */
+
+.dp-dashRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px 10px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.dp-dashTitle {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dp-dashMeta {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.dp-dashUrl {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dp-dashRow .dp-tools {
+  grid-column: 1 / -1;
+  padding-top: 2px;
+}
+
 .dp-logRow {
   display: grid;
   grid-template-columns: 84px 52px minmax(0, 1fr);
@@ -513,12 +578,26 @@
 
 /* ---------- trace rows ---------- */
 
+/* One shared grid keeps the header labels above their values. */
+.dp-traceHead,
 .dp-traceRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 86px 64px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.9fr) 158px 86px 62px;
   gap: 10px;
   align-items: center;
   width: 100%;
+  box-sizing: border-box;
+}
+
+.dp-traceHead {
+  padding: 0 10px 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.dp-traceRow {
   padding: 9px 10px;
   border: none;
   background: var(--dsw-alias-bg-layer-1);
@@ -527,27 +606,103 @@
   font-size: 12px;
   line-height: 18px;
   text-align: left;
+}
+
+.dp-traceIdCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The id is the row's toggle: only clicking it opens the span tree. */
+.dp-traceId {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-brand-primary);
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
   cursor: pointer;
 }
 
-.dp-traceName {
+.dp-traceCaret {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+}
+
+.dp-traceIdText {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dp-traceMeta {
+.dp-copyBtn {
+  flex: none;
+  padding: 1px 6px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.dp-copyBtn[data-state='ok'] {
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary));
+}
+
+.dp-copyBtn[data-state='fail'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dp-traceRoot,
+.dp-traceService,
+.dp-traceTime {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dp-traceRoot {
   color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.dp-traceService {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dp-traceTime {
+  color: var(--dsw-alias-label-secondary);
   font-family: var(--ds-font-family-code, ui-monospace, monospace);
   font-size: 11px;
-  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dp-traceDur {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
 .dp-durBar {
   display: block;
   height: 4px;
-  margin-top: 3px;
   border-radius: 999px;
   corner-shape: round;
   background: var(--dsw-alias-bg-layer-3);
@@ -1019,6 +1174,15 @@
   .dp-traceRow:hover {
     background: var(--dsw-alias-bg-layer-2);
   }
+
+  .dp-traceId:hover {
+    text-decoration: underline;
+  }
+
+  .dp-copyBtn:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    color: var(--dsw-alias-label-primary);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1041,5 +1205,15 @@
 
   .dp-logRow {
     grid-template-columns: 72px 44px minmax(0, 1fr);
+  }
+
+  .dp-traceHead {
+    display: none;
+  }
+
+  .dp-traceHead,
+  .dp-traceRow {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) 132px 66px 52px;
+    gap: 6px;
   }
 }

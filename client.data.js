@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({
   chunk: 'client.data.js',
   factory() {
     return (runtime) => {
-      const { normalizeLogs, normalizeMetrics, normalizeState, normalizeTraces } = runtime;
+      const { normalizeDashboards, normalizeLogs, normalizeMetrics, normalizeState, normalizeTraces } = runtime;
 
       /** Host route prefix owned by the plugin's Host half. */
       const BASE = '/api/my-deploy';
@@ -55,31 +55,83 @@ window.__ModuleLoader__.load({
         return normalizeState(await exchange('/disconnect', { method: 'POST', body: '{}' }));
       }
 
-      /** Refresh the service-name list from the MCP server. */
-      async function fetchServices(refresh) {
-        const body = await exchange(`/services${refresh === true ? '?refresh=1' : ''}`, GET);
+      /**
+       * Refresh the service-name list from the datasource's label values.
+       * @param refresh - ask the Host to bypass its own cache.
+       * @param datasource - the Loki uid the filter is scoped to.
+       * @param range - the window the label values are read over.
+       */
+      async function fetchServices(refresh, datasource, range) {
+        const params = [];
+        if (refresh === true) params.push('refresh=1');
+        if (typeof datasource === 'string' && datasource !== '') params.push(`datasource=${encodeURIComponent(datasource)}`);
+        if (typeof range === 'string' && range !== '') params.push(`range=${encodeURIComponent(range)}`);
+        const body = await exchange(`/services${params.length === 0 ? '' : `?${params.join('&')}`}`, GET);
         return {
           ok: body.ok === true,
           note: typeof body.note === 'string' ? body.note : '',
+          label: typeof body.label === 'string' ? body.label : '',
           services: Array.isArray(body.services) ? body.services.filter((name) => typeof name === 'string') : [],
         };
       }
 
-      /** The CPU and memory cards for one service and range. */
-      async function fetchMetrics(service, range) {
-        const query = `?service=${encodeURIComponent(service)}&range=${encodeURIComponent(range)}`;
+      /** The datasource menu and its auto-picked default per view. */
+      async function fetchDatasources() {
+        const body = await exchange('/datasources', GET);
+        const defaults = body.defaults !== null && typeof body.defaults === 'object' ? body.defaults : {};
+        return {
+          ok: body.ok === true,
+          datasources: Array.isArray(body.datasources)
+            ? body.datasources
+                .filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.uid === 'string')
+                .map((entry) => ({
+                  uid: entry.uid,
+                  name: typeof entry.name === 'string' ? entry.name : entry.uid,
+                  type: typeof entry.type === 'string' ? entry.type : '',
+                  isDefault: entry.isDefault === true,
+                }))
+            : [],
+          defaults: {
+            monitor: typeof defaults.monitor === 'string' ? defaults.monitor : '',
+            logs: typeof defaults.logs === 'string' ? defaults.logs : '',
+            traces: typeof defaults.traces === 'string' ? defaults.traces : '',
+          },
+        };
+      }
+
+      /** The datasource part of a query string, empty when nothing is chosen. */
+      function datasourceParam(datasource) {
+        return typeof datasource === 'string' && datasource !== '' ? `&datasource=${encodeURIComponent(datasource)}` : '';
+      }
+
+      /** Every dashboard the MCP server can list. */
+      async function fetchDashboards(query) {
+        const params = [];
+        if (typeof query === 'string' && query.trim() !== '') params.push(`query=${encodeURIComponent(query.trim())}`);
+        return normalizeDashboards(await exchange(`/dashboards${params.length === 0 ? '' : `?${params.join('&')}`}`, GET));
+      }
+
+      /** The CPU and memory cards for one service, range, and datasource. */
+      async function fetchMetrics(service, range, datasource) {
+        const query = `?service=${encodeURIComponent(service)}&range=${encodeURIComponent(range)}${datasourceParam(datasource)}`;
         return normalizeMetrics(await exchange(`/metrics${query}`, GET));
       }
 
-      /** The log rows for one service and range. */
-      async function fetchLogs(service, range, limit) {
-        const query = `?service=${encodeURIComponent(service)}&range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}`;
-        return normalizeLogs(await exchange(`/logs${query}`, GET));
+      /** The log rows for one service, range, and datasource; `keyword` filters lines. */
+      async function fetchLogs(service, range, limit, datasource, keyword) {
+        const params = [
+          `service=${encodeURIComponent(service)}`,
+          `range=${encodeURIComponent(range)}`,
+          `limit=${encodeURIComponent(String(limit))}`,
+        ];
+        if (typeof datasource === 'string' && datasource !== '') params.push(`datasource=${encodeURIComponent(datasource)}`);
+        if (typeof keyword === 'string' && keyword.trim() !== '') params.push(`keyword=${encodeURIComponent(keyword.trim())}`);
+        return normalizeLogs(await exchange(`/logs?${params.join('&')}`, GET));
       }
 
-      /** The trace rows for one service and range. */
-      async function fetchTraces(service, range, limit) {
-        const query = `?service=${encodeURIComponent(service)}&range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}`;
+      /** The trace rows for one service, range, and datasource. */
+      async function fetchTraces(service, range, limit, datasource) {
+        const query = `?service=${encodeURIComponent(service)}&range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}${datasourceParam(datasource)}`;
         return normalizeTraces(await exchange(`/traces${query}`, GET));
       }
 
@@ -96,10 +148,25 @@ window.__ModuleLoader__.load({
           traces: body.traces === null || body.traces === undefined ? null : normalizeTraces(body.traces),
           model: typeof body.model === 'string' ? body.model : '',
           degraded: body.degraded === true,
+          /* A dashboard write tells the page to refetch its list. */
+          mutated: body.mutated === true,
+          created: Array.isArray(body.created) ? body.created.filter((entry) => entry !== null && typeof entry === 'object') : [],
         };
       }
 
-      return { ask, connect, disconnect, fetchLogs, fetchMetrics, fetchServices, fetchState, fetchTraces, saveConfig };
+      return {
+        ask,
+        connect,
+        disconnect,
+        fetchDashboards,
+        fetchDatasources,
+        fetchLogs,
+        fetchMetrics,
+        fetchServices,
+        fetchState,
+        fetchTraces,
+        saveConfig,
+      };
     };
   },
 });
